@@ -23,10 +23,10 @@
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
 
 
-// Development file: $Id: iperfsum.cpp,v 1.4 2016/03/29 19:44:43 meekj Exp $
+// Development file: $Id: iperfsum.cpp,v 1.6 2016/04/08 13:31:07 meekj Exp $
 
 // MacOS X
-// clang++ -lpcap -I/opt/local/include -L/opt/local/lib -o iperfsum iperfsum.cpp
+// clang++ -lpcap -o iperfsum iperfsum.cpp -std=c++11
 
 // Ubuntu Linux
 // clang++-3.6 -std=c++11 -o iperfsum iperfsum.cpp -lpcap
@@ -530,6 +530,8 @@ void decode_packet(u_char *args, const struct pcap_pkthdr *header, const u_char 
   return;
 }
 
+// This program is modified from libpcapR. Some Rcpp related code is left here commented for possible future use
+
 //'Load libpcap data into R data frame
 //'
 //'@param str input filename, libpcap_filter
@@ -541,28 +543,38 @@ void decode_packet(u_char *args, const struct pcap_pkthdr *header, const u_char 
 
 int main(int argc, char **argv) {
 
-  std::string sfile, sfilter;
-  bool debug, verbose, help;
+  const std::string rcs_id = "$Id: iperfsum.cpp,v 1.6 2016/04/08 13:31:07 meekj Exp $";
+  std::string sfile = "", sfilter = "";
+  bool debug, verbose, version, help;
 
   Flags flags;
 
-  flags.Var(sfile, 'r', "file", std::string(""), "libpcap input file", "Required");
-  flags.Var(sfilter, 'f', "filter", std::string(""), "Filter in libpcap format", "Usually required but defaults to empty");
+  flags.Var(sfile,   'r', "file", std::string(""), "libpcap input file", "Required");
+  flags.Var(sfilter, 'f', "filter", std::string(""), "Filter in libpcap format", "Often required but defaults to empty");
 
-  flags.Bool(debug, 'd', "debug", "show debug messsages", "Optional");
-  flags.Bool(verbose, 'v', "verbose", "show all packets matching the filter, otherwise only the per time bin summary is printed", "Optional");
-  flags.Bool(help, 'h', "help", "show this help and exit", "Optional");
+  flags.Bool(debug,   'd', "debug", "show debug messsages", "Optional");
+  flags.Bool(verbose, 'v', "verbose", "show all packets matching the filter,\n otherwise only the per time bin summary is printed", "Optional");
+  flags.Bool(version, 'V', "version", "show version number and exit", "Optional");
+  flags.Bool(help,    'h', "help", "show this help and exit", "Optional");
 
   if (argc < 2) {
     flags.PrintHelp(argv[0]);
     return 1;
   }
 
-  if (!flags.Parse(argc, argv)) {
+   if (!flags.Parse(argc, argv)) {
     flags.PrintHelp(argv[0]);
   } else if (help) {
     flags.PrintHelp(argv[0]);
     return 0;
+  } else if (version) {
+    std::cout << "Version: " << rcs_id << std::endl;
+    return 0;
+  }
+
+  if (sfile.length() < 1) { // Filename is required
+    flags.PrintHelp(argv[0]);
+    return 1;
   }
 
   char *file = &sfile[0u];
@@ -625,6 +637,7 @@ int main(int argc, char **argv) {
 
   if (handle == NULL) {
     std::cout << "Couldn't open file: " << file << "  " << errbuf << std::endl;
+    return 1;
     //    throw Rcpp::exception("File open error");
   }
 
@@ -633,6 +646,7 @@ int main(int argc, char **argv) {
   // Compile the filter expression
   if (pcap_compile(handle, &fp, filter_exp, 0, PCAP_NETMASK_UNKNOWN) == -1) {
     std::cout << "Couldn't parse filter: " << filter_exp << "  " << pcap_geterr(handle) << std::endl;
+    return 1;
     //    throw Rcpp::exception("Filter parsing error");
   }
 
@@ -641,6 +655,7 @@ int main(int argc, char **argv) {
   // Apply the compiled filter
   if (pcap_setfilter(handle, &fp) == -1) {
     std::cout << "Could not set the filter: " << filter_exp << "  " << pcap_geterr(handle) << std::endl;
+    return 1;
     //    throw Rcpp::exception("Filter set error");
   }
 

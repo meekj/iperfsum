@@ -1,0 +1,98 @@
+.TH IPERFSUM 1  "8 April 2016"
+.SH NAME
+iperfsum \- Summarize per second data from a libpcap packet capture file
+.SH SYNOPSIS
+.na
+.B iperfsum
+[
+.B \-V --version -d --debug -h --help -v --verbose
+]
+.br
+[
+.B \-f | --filter
+.I filter_expression
+]
+.B \-r | --file
+.I capture_file
+
+.br
+.ad
+.SH DESCRIPTION
+.LP
+\fIiperfsum\fP prints a per second summary of network activity as seen
+in a packet capture file. Output includes Date/Time, Packets, Bytes,
+Throughput(kbps), and Re-transmitted packets (only payload carrying packets).
+
+Bytes and throughput are calculated using the frame size which includes the usually present 14 byte Ethernet header.
+
+Re-transmitted packets are counted when data-carrying TCP (only)
+packets are seen more than once. Packets are identified with a key
+that consists of srcIP-srcPort_dstIP-DstPort:SequenceNumber. The first
+packet is not counted, but the final (presumably successfully delivered and ACKed)
+re-transmitted packet is counted. Keep this in mind when analyzing
+results.
+
+When looking at received data non-zero re-transmitted packet counts suggest that duplicate packets were received.
+
+Header lines are printed before the per second summary and include:
+the input file name, filter_expression, TCP client-server-directions seen,
+and the capture start date and time. The intention is to use the
+headers to label analysis plots and possibly to compare the sender /
+reciever file data to be sure that they are for the same iperf test
+run.
+
+The primary purpose of the program is to analyze packets captured as
+part of an iperf test. The primary downside of using it to look at per
+second summary data for general traffic is that the header lines
+listing all of the TCP client-server-directions and the packet count for
+each could be a very long line if many hosts were
+involved. For iperf analysis this would be a single TCP
+session-direction.
+
+Optionally, a complete list of the packets is printed (--verbose).
+
+.SH OPTIONS
+.TP
+.BR \-r ", " \-\-file \ \fIfilename.tcpd\fR
+The input file.
+For now, only uncompressed libpcap files can be read. This argument is required.
+
+.TP
+.BR \-f ", " \-\-filter \ \fI'filter expression'\fR
+Process only packets matching the libpcap filter expression.
+
+.TP
+.BR \-v ", " \-\-verbose
+Print a summary line for each packet in the capture file.
+
+.TP
+.BR \-V ", " \-\-version
+Print the version number and exit.
+
+.TP
+.BR \-h ", " \-\-help \fI \fR
+Print a short options summary.
+.LP
+
+.SH "SEE ALSO"
+tcpdump(1), pcap(3PCAP), pcap-filter(7), pcap-tstamp(7), iperf-anal.R (included in the distribution)
+.LP
+
+.SH AUTHOR
+.LP
+Jon Meek
+.LP
+The current version is available from:
+.LP
+.RS
+.I https://www.github.com/meekj/iperfsum
+.LP
+.SH BUGS
+.LP
+The only time bin width is currently one second. Options for smaller bin sizes should be provided.
+
+IPv6 testing was limited, at least one assumption was made that might fail in the future.
+
+Reading of gzipped packet capture files is not yet supported.
+
+Reading of pcap-ng files is not yet supported.
