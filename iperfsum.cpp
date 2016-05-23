@@ -23,7 +23,7 @@
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
 
 
-// Development file: $Id: iperfsum.cpp,v 1.6 2016/04/08 13:31:07 meekj Exp $
+// Development file: $Id: iperfsum.cpp,v 1.8 2016/05/12 13:12:22 meekj Exp $
 
 // MacOS X
 // clang++ -lpcap -o iperfsum iperfsum.cpp -std=c++11
@@ -52,7 +52,7 @@
 #include <net/ethernet.h> // Ethertypes, etc
 
 #ifdef __linux__
-#include <netinet/ether.h> // Conversions, but not on Mac
+#include <netinet/ether.h> // Conversions, but not on Mac, we should just copy Linux's headers...
 #endif
 
 #include <netinet/ip.h>    // IP Header data structures
@@ -98,10 +98,10 @@ std::vector <std::string> src_mac, dst_mac, src_addr, dst_addr, protocol, tcp_fl
 std::unordered_map<std::string, int> tcp_hash, direction_hash;
 
 // Vectors and temp vars for per unit time results
-std::vector <int>         bin_index, bin_packets, bin_bytes, bin_retrans;
+std::vector <int>         bin_index, bin_packets, bin_totalbytes, bin_payloadbytes, bin_retrans;
 std::vector <double>      bin_kbps;
 std::vector <std::string> bin_time;
-int t_packets = 0, t_bytes = 0, t_retrans = 0, first_index_offset, last_index;
+int t_packets = 0, t_totalbytes = 0, t_payloadbytes = 0, t_retrans = 0, first_index_offset, last_index;
 
 double kbps;
 bool debug = false;
@@ -165,14 +165,15 @@ void decode_packet(u_char *args, const struct pcap_pkthdr *header, const u_char 
     tt = first_index_offset + last_index;
     std::strftime(t_timestring, sizeof(t_timestring), "%FT%T", gmtime(&tt));
 
-    kbps = 8 * t_bytes / 1000.0;
+    kbps = 8 * t_totalbytes / 1000.0;
     bin_index.push_back(last_index);
     bin_packets.push_back(t_packets);
-    bin_bytes.push_back(t_bytes);
+    bin_totalbytes.push_back(t_totalbytes);
+    bin_payloadbytes.push_back(t_payloadbytes);
     bin_kbps.push_back(kbps);
     bin_retrans.push_back(t_retrans);
     bin_time.push_back(t_timestring);
-    t_packets = 0, t_bytes = 0, t_retrans = 0;
+    t_packets = 0, t_totalbytes = 0, t_payloadbytes = 0, t_retrans = 0;
   }
   last_index = current_index;
 
@@ -184,9 +185,9 @@ void decode_packet(u_char *args, const struct pcap_pkthdr *header, const u_char 
   framesize.push_back(size_frame);
 
   t_packets++; // Per time bin count
-  t_bytes += size_frame;
+  t_totalbytes += size_frame;
 
-  mac_ptr = ether_ntoa((const struct ether_addr *)&ethernet->ether_shost); // Save MAC addresses
+  mac_ptr = ether_ntoa((const struct ether_addr *)&ethernet->ether_shost); // Save MAC addresses, used only in verbose mode
   src_mac.push_back(mac_ptr);
 
   mac_ptr = ether_ntoa((const struct ether_addr *)&ethernet->ether_dhost);
@@ -304,6 +305,7 @@ void decode_packet(u_char *args, const struct pcap_pkthdr *header, const u_char 
       }
       
       size_payload = ip_total_length - (size_ip + size_tcp);
+      t_payloadbytes += size_payload;
 
       t_tcp_pkt_key << std::string(ip_src) << '-' << port_src << '_' << std::string(ip_dst) << '-' << port_dst << ':' << t_tcp_seq_num;
       tcp_pkt_key = t_tcp_pkt_key.str(); // Make it a std::string
@@ -337,6 +339,7 @@ void decode_packet(u_char *args, const struct pcap_pkthdr *header, const u_char 
 
       udp = (struct udphdr*)(packet + SIZE_ETHERNET + vlan_tag_length + size_ip);
       size_payload = ip_total_length - (size_ip + 8);
+      t_payloadbytes += size_payload;
 
       protocol.push_back("UDP");
       t_tcp_flags = "";
@@ -543,7 +546,7 @@ void decode_packet(u_char *args, const struct pcap_pkthdr *header, const u_char 
 
 int main(int argc, char **argv) {
 
-  const std::string rcs_id = "$Id: iperfsum.cpp,v 1.6 2016/04/08 13:31:07 meekj Exp $";
+  const std::string rcs_id = "$Id: iperfsum.cpp,v 1.8 2016/05/12 13:12:22 meekj Exp $";
   std::string sfile = "", sfilter = "";
   bool debug, verbose, version, help;
 
@@ -682,10 +685,11 @@ int main(int argc, char **argv) {
   // Save final time bin data
   tt = first_index_offset + last_index;
   std::strftime(t_timestring, sizeof(t_timestring), "%FT%T", gmtime(&tt));
-  kbps = 8 * t_bytes / 1000.0;
+  kbps = 8 * t_totalbytes / 1000.0;
   bin_index.push_back(last_index);
   bin_packets.push_back(t_packets);
-  bin_bytes.push_back(t_bytes);
+  bin_totalbytes.push_back(t_totalbytes);
+  bin_payloadbytes.push_back(t_payloadbytes);
   bin_kbps.push_back(kbps);
   bin_retrans.push_back(t_retrans);
   bin_time.push_back(t_timestring);
@@ -701,11 +705,11 @@ int main(int argc, char **argv) {
   std::strftime(t_timestring, sizeof(t_timestring), "%F %T", gmtime(&tt));
   std::cout << "Start: " << t_timestring << std::endl;
 
-  printf("    n  Packets        Bytes      kbps   ReTrans  Time\n");
+  printf("    n  Packets        Bytes      Payload      kbps  ReTrans  Time\n");
   int bincount = bin_index.size();
   for (int i = 0; i < bincount; i++) {
-    printf("%5d %8d %12d %12.2f %5d  %s\n", 
-	   bin_index[i], bin_packets[i], bin_bytes[i], bin_kbps[i], bin_retrans[i], bin_time[i].c_str());
+    printf("%5d %8d %12d %12d %12.2f %5d  %s\n", 
+	   bin_index[i], bin_packets[i], bin_totalbytes[i], bin_payloadbytes[i], bin_kbps[i], bin_retrans[i], bin_time[i].c_str());
   }
 
   if (verbose) {
