@@ -1,4 +1,4 @@
-#!/usr/local/bin/r
+#!/usr/bin/Rscript
 
 ## iperf Test Summary
 
@@ -8,22 +8,14 @@
 ## Assume synchronized clocks, could add option to align
 ## Assume that file names are 'synchronized', see below for examples, manually re-name if needed
 
-
-## iperf-anal.r --outdir /n2/r-reports --datadir /home/meekj/temp/tcpd/iperf-20160410 --test t1-192.168.205.10
-## iperf-anal.r --outdir /n2/r-reports --datadir /home/meekj/temp/tcpd/iperf-20160410 --test t2-192.168.205.10
-
-## iperf-anal.r --outdir /Users/meekj/r-reports --datadir /Users/meekj/data/tcpd/iperf-20160410 --test t1-192.168.205.48
-
-
-## iperf-anal.r --datadir /home/meekj/temp/tcpd/iperf-20160410 --test t2-192.168.205.10
+## Sample command line:
+##  iperf-anal.r --outdir /n2/r-reports --datadir /home/meekj/data/tcpd/20160629 --test apu3-192.168.205.48 --note "Segmentation offload disabled on both sides leads to performance issues"
 
 ## Sample file names:
 ##  fSnd <- 't1-192.168.205.48-snd.dat'
 ##  fRcv <- 't1-192.168.205.48-rcv.dat'
 
-RSCid <- "$Id: iperf-anal.r,v 1.5 2016/04/30 15:28:04 meekj Exp $"
-
-USE_XTABLE <- FALSE
+RSCid <- "$Id: iperf-anal.r,v 1.10 2016/06/30 18:55:19 meekj Exp $"
 
 suppressMessages(library(ggplot2))
 suppressMessages(library(dplyr))
@@ -32,29 +24,34 @@ suppressMessages(library(stringr))
 suppressMessages(library(knitr))
 suppressMessages(library(docopt))
 
+## print(sessionInfo())
 
+TestNote <- ''
 
-
-doc <- "Usage: iperf-anal.r [--help --datadir <datadir> --outdir <outdir> --test <test>]
+doc <- "Usage: iperf-anal.r [--help --datadir <datadir> --outdir <outdir> --test <test> --note <note>]
 
 -h --help           Show this help text
 --datadir <datadir> Data directory
 --outdir <outdir>   Report directory, default is data directory
 --test <test>       Name of the test, filename without trailing -snd.dat / -rcv.dat
+--note <note>       Optional note to describe the test
 "
-opt <- docopt(doc)
+opt <- docopt(doc = doc, strict = FALSE, quoted_args = TRUE)
+
+str(opt)
 
 FileDir  <- opt[["datadir"]]
 OutDir   <- opt[["outdir"]]
 TestName <- opt[["test"]]
+TestNote <- opt[["note"]]
 
-if (is.null(opt[["outdir"]])) { # --test not specified, so put report in the data directory
+if (is.null(opt[["outdir"]])) { # --outdir not specified, so put report in the data directory
     OutDir <- FileDir
 }
 OutFile <- paste(OutDir, '/', TestName, '.html', sep = '')
-## OutFile <- paste(OutDir, '/', TestName, '.pdf', sep = '')
 
 setwd(OutDir) # This will put the 'figure' directory with temporary image files in the same directory as the output
+              # But be careful with running other programs that might write to the same directory at the same time
 
 
 ## Form the data file names
@@ -84,8 +81,6 @@ theme_jm1 <- theme_bw() +
         legend.text = element_text(size = rel(1.3))
     )
 
-
-
 Sys.setenv(TZ="UTC")
 
 HeaderLinesCount <- 3
@@ -105,11 +100,20 @@ t2      <- read.table(FileRcv, skip=HeaderLinesCount, header = TRUE)
 t2$Time <- as.POSIXct(strptime(as.character(t2$Time), format = "%Y-%m-%dT%H:%M:%S"))
 t2$View <- 'rcv'
 
+TotalBytesSent     <- sum(as.numeric(t1$Bytes)) # Need float to prevent integer overflow
+TotalBytesReceived <- sum(as.numeric(t2$Bytes))
+
+TotalPayloadSent     <- sum(as.numeric(t1$Payload))
+TotalPayloadReceived <- sum(as.numeric(t2$Payload))
+
+TotalPacketsSent     <- sum(as.numeric(t1$Packets))
+TotalPacketsReceived <- sum(as.numeric(t2$Packets))
+
 iperf <- rbind(t1, t2)
 iperf <- iperf %>% mutate(RetransPct = 100 * ReTrans / Packets)
 iperf$View <- factor(iperf$View, c('snd', 'rcv'))
 
-dup_pkts_rcv <- sum(iperf %>% filter(View == 'rcv') %>% select(ReTrans))
+dup_pkts_rcv <- sum( iperf %>% filter(View == 'rcv') %>% select(ReTrans) )
 
 if (dup_pkts_rcv == 0) {
     iperf_retrans <- iperf %>% filter(View == 'snd')
@@ -124,63 +128,108 @@ if (rt_ymax == 0) {rt_ymax = 0.5}
 
 knitr_data <- c(
     "# iperf Test Results",
-    "### Test: `r TestName`",
-    "### Direction: `r TestDirection`",
-    "### Start time: `r TestDateTime`",
-    "```{r plot1, echo=FALSE, message=FALSE, fig.width = FigureWidth, fig.height = FigureHeight}",
+    "### Test: `r TestName` -- `r TestDirection`",
+    "### Start: `r TestDateTime`")
+
+
+if (length(TestNote) > 0) {knitr_data <- c(knitr_data, "### Note: `r TestNote`")} # Add note if we have one
+
+knitr_data <- c(knitr_data, "```{r plot1, echo=FALSE, message=FALSE, fig.width = FigureWidth, fig.height = FigureHeight}")
+
+## knitr_data <- NULL                    # For interactive development
+
+knitr_data <- c(knitr_data, 
     "p1 <- ggplot(iperf) +",
     "     geom_line(aes(x = Time,  y = kbps / 1e3, colour = View), size=0.06) +",
     "     geom_point(aes(x = Time, y = kbps / 1e3, colour = View), size=PointSize, shape=19) +",
-    "     xlab(\"\") + ylab(\"Throughput, Mbps\") + ggtitle(Title) +",
-    "     scale_colour_manual(values=c(\"red\", \"blue\", \"green\", \"yellow\")) + theme_jm1",
+    "     xlab('') + ylab('Throughput, Mbps') + ggtitle(Title) +",
+    "     scale_colour_manual(values=c('red', 'blue', 'green', 'yellow')) + theme_jm1",
 
     "p2 <- ggplot(iperf_retrans) +",
     "     geom_line(aes(x = Time,  y = RetransPct, colour = View), size=0.06) +",
     "     geom_point(aes(x = Time, y = RetransPct, colour = View), size=PointSize, shape=19) +",
-    "     xlab(\"\") + ylab(\"% Retransmits\") + ylim(c(0, rt_ymax)) +",
-    "     scale_colour_manual(values=c(\"red\", \"blue\", \"green\", \"yellow\")) + theme_jm1",
+    "     xlab('') + ylab('% Retransmited') + ylim(c(0, rt_ymax)) +",
+    "     scale_colour_manual(values=c('red', 'blue', 'green', 'yellow')) + theme_jm1",
 
     "p <- arrangeGrob(p1, p2, ncol = 1, heights = c(2, 1))",
-    "grid.arrange(p)",
-    "```")
+    "grid.arrange(p)")
+
+## eval(parse(text = knitr_data))       # For interactive development
+
+knitr_data <- c(knitr_data, "```")
 
 ## Build a summary table
 
-tsnd <- t1 %>% select(Time, Packets, kbps, ReTrans)
-trcv <- t2 %>% select(Time, Packets, kbps, ReTrans)
+tsnd <- t1 %>% select(Time, Bytes, Payload, Packets, kbps, ReTrans)
+trcv <- t2 %>% select(Time, Bytes, Payload, Packets, kbps, ReTrans)
 
 tsnd$kbps <- tsnd$kbps / 1000
 trcv$kbps <- trcv$kbps / 1000
 
-names(tsnd) <- c('Time', 'PacketsSent', 'MbpsSent', 'PacketsReTrans')
-names(trcv) <- c('Time', 'PacketsRecv', 'MbpsRecv', 'DupPackets')
+##    Time   Bytes Payload Packets     kbps ReTrans
+
+
+names(tsnd) <- c('Time', 'BytesSent', 'PayloadSent', 'PacketsSent', 'MbpsSent', 'PacketsReTrans')
+names(trcv) <- c('Time', 'BytesRecv', 'PayloadRecv', 'PacketsRecv', 'MbpsRecv', 'DupPackets')
 
 t3 <- full_join(tsnd, trcv, by = 'Time')
-twide <- t3 %>% select(PacketsSent, PacketsRecv, MbpsSent, MbpsRecv, PacketsReTrans, DupPackets)
-## twide <- t3 %>% select(Time, PacketsSent, PacketsRecv, MbpsSent, MbpsRecv, PacketsReTrans, DupPackets)
 
+FirstTime <- t3$Time[1]
 
-if (USE_XTABLE) { # More flexible table formatter, but no benefit so far
-    library(xtable)
-    p.table <- xtable(twide)
+t3 <- t3 %>% mutate(dt = Time - FirstTime)
 
-    knitr_data <- c(knitr_data, # Append table data
-                    "```{r table1, results='asis', echo=FALSE, message=FALSE}",
-                    "print(p.table, include.rownames=TRUE, type='html', comment=FALSE)",
-                    "```",
-                    '***')
+## t3$MbpsSent - t3$MbpsRecv
 
-} else { # Use knitr native table formatter
+## t3$BytesSent - t3$BytesRecv
 
-    knitr_data <- c(knitr_data, # Append table data
-                    "```{r table1, echo=FALSE, message=FALSE}",
-                    "kable(twide, digits = 2, row.names = TRUE)",
-                    "```",
-                    '***')
+twide <- t3 %>% select(dt, PacketsSent, PacketsRecv, MbpsSent, MbpsRecv, PacketsReTrans, DupPackets)
 
-}
+## Use knitr native table formatter
+
+knitr_data <- c(knitr_data, # Append table data
+                "```{r table1, echo=FALSE, message=FALSE}",
+                "kable(twide, digits = 2, row.names = FALSE)",
+                "```",
+                '***')
+
+medianBWsnd <- boxplot.stats(tsnd$MbpsSent)[["stats"]][3]
+medianBWrec <- boxplot.stats(trcv$MbpsRecv)[["stats"]][3]
+
+mC <- lm( tsnd$MbpsSent ~ tsnd$Time, subset=3:(length(tsnd$MbpsSent) - 2) ) # Linear fit, ignoring first and last two periods
+fittedBWsnd <- mC$coefficients[1]
+
+mC <- lm( trcv$MbpsRecv ~ trcv$Time, subset=3:(length(trcv$MbpsRecv) - 2) )
+fittedBWrcv <- mC$coefficients[1]
+
+## Build a summary table
+summary_table <- NULL
+summary_table <- rbind(summary_table, list(Data = 'Total', Sent = TotalBytesSent / 1e6, Received = TotalBytesReceived / 1e6, Units = 'MBytes'))
+summary_table <- rbind(summary_table, list(Data = 'Payload', Sent = TotalPayloadSent / 1e6, Received = TotalPayloadReceived / 1e6, Units = 'MBytes'))
+summary_table <- rbind(summary_table, list(Data = 'Median Throughput', Sent =  medianBWsnd, Received = medianBWrec, Units = 'Mbps'))
+summary_table <- rbind(summary_table, list(Data = 'Linear Fit Throughput', Sent = fittedBWsnd, Received = fittedBWrcv, Units = 'Mbps'))
+
+knitr_data <- c(knitr_data, # Append summary table data
+                "## Summary",
+                "```{r table2, echo=FALSE, message=FALSE}",
+                "kable(summary_table, digits = 2, row.names = FALSE)",
+                "```",
+                '***')
+
+knitr_data <- c(knitr_data, # Append CSS data, need to do it at end to override defaults
+    '<style type="text/css">',
+    'body {',
+    'max-width: 1400px;',   # Make the plots wider, default is 800
+    'margin: auto;',
+    'padding: 1em;',
+    'line-height: 20px ; ',
+    '}',
+    'table, th {',          # Customize tables a bit
+    '   max-width: 95%;',
+    '   border: 1px solid #ccc;',
+    '   border-spacing: 15px 3px;',
+    '}',
+    '</style>'
+    )
 
 writeLines(knit2html(text = knitr_data), OutFile)
-
-
 
